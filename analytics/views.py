@@ -14,6 +14,8 @@ from .models import Customer, Purchase, PurchaseItem, Product
 from django.db.models import Count, Sum, Q
 
 
+# -------------------------- AI Analytic functions  -------------------
+
 class PurchaseCategoryPreferencesView(APIView):
     def get(self, request, *args, **kwargs):
         try:
@@ -269,6 +271,102 @@ class UploadCSVView(APIView):
             'file_name': unique_filename
         })
 
+
+# ------------------- Non-AI | direct tables' data for frontend  -------------------
+
+class BasicAnalyticsOverview(APIView):
+    def get(self, request, *args, **kwargs):
+        try:
+            total_customers = Customer.objects.count()
+            total_products = Product.objects.count()
+            total_purchases = Purchase.objects.count()
+            total_revenue = Purchase.objects.aggregate(total=Sum('total_amount'))['total'] or 0
+
+            top_categories = (
+                PurchaseItem.objects
+                .values('product__category')
+                .annotate(quantity_sold=Sum('quantity'))
+                .order_by('-quantity_sold')[:5]
+            )
+
+            top_customers = (
+                Purchase.objects
+                .values('customer__name')
+                .annotate(total_spent=Sum('total_amount'))
+                .order_by('-total_spent')[:5]
+            )
+
+            return Response({
+                'summary': {
+                    'total_customers': total_customers,
+                    'total_products': total_products,
+                    'total_purchases': total_purchases,
+                    'total_revenue': float(total_revenue)
+                },
+                'top_categories': list(top_categories),
+                'top_customers': list(top_customers)
+            })
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+
+class CustomerListView(APIView):
+    def get(self, request, *args, **kwargs):
+        customers = Customer.objects.all().values(
+            'id', 'name', 'gender', 'age', 'location', 'created_at'
+        )
+        data = [
+            {
+                **customer,
+                'created_at': customer['created_at'].strftime('%Y-%m-%d %H:%M')
+            } for customer in customers
+        ]
+        return Response(data)
+
+class ProductListView(APIView):
+    def get(self, request, *args, **kwargs):
+        products = Product.objects.all().values(
+            'id', 'name', 'category', 'price', 'base_price', 'stock_quantity'
+        )
+        return Response(list(products))
+
+class PurchaseListView(APIView):
+    def get(self, request, *args, **kwargs):
+        purchases = Purchase.objects.select_related('customer').all()
+
+        data = [
+            {
+                'id': purchase.id,
+                'customer': purchase.customer.name or f"Customer {purchase.customer.id}",
+                'purchase_date': purchase.purchase_date.strftime('%Y-%m-%d %H:%M'),
+                'total_amount': float(purchase.total_amount),
+                'discount_applied': purchase.discount_applied
+            }
+            for purchase in purchases
+        ]
+        return Response(data)
+    
+class PurchaseItemListView(APIView):
+    def get(self, request, *args, **kwargs):
+        items = PurchaseItem.objects.select_related('purchase', 'product').all()
+
+        data = [
+            {
+                'id': item.id,
+                'purchase_id': item.purchase.id,
+                'product_name': item.product.name,
+                'category': item.product.category,
+                'quantity': item.quantity,
+                'price_at_purchase': float(item.price_at_purchase),
+                'purchase_date': item.purchase.purchase_date.strftime('%Y-%m-%d %H:%M'),
+                'customer': item.purchase.customer.name or f"Customer {item.purchase.customer.id}"
+            }
+            for item in items
+        ]
+        return Response(data)
+
+
+# ------------------ not applicable codes - reserved just in case ------------------
 # return segmentation results without human-readable labels
 # class CustomerSegmentationView(APIView):
 #     def get(self, request, *args, **kwargs):
