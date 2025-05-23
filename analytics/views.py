@@ -3,38 +3,126 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser
+from datetime import datetime
+from django.utils.timezone import now
 import pandas as pd
+from sklearn.cluster import KMeans
 import os
 import uuid
 
-from sklearn.cluster import KMeans
+from .models import Customer, Purchase, PurchaseItem, Product
+from django.db.models import Count, Sum, Q
 
-class UploadCSVView(APIView):
-    parser_classes = [MultiPartParser]
 
-    def post(self, request, *args, **kwargs):
-        file_obj = request.FILES.get('file')
-        if not file_obj or not file_obj.name.endswith('.csv'):
-            return Response({'error': 'Please upload a valid CSV file.'}, status=400)
+class PurchaseCategoryPreferencesView(APIView):
+    def get(self, request, *args, **kwargs):
+        try:
+            # Define age groups
+            age_groups = {
+                '18–25': Q(age__gte=18, age__lte=25),
+                '26–35': Q(age__gte=26, age__lte=35),
+                '36–50': Q(age__gte=36, age__lte=50),
+                '51+': Q(age__gte=51),
+                'Unknown': Q(age__isnull=True),
+            }
 
-        media_root = os.path.join(os.getcwd(), 'media')
-        os.makedirs(media_root, exist_ok=True)
+            response_data = {}
 
-        # Generate unique file name
-        file_ext = os.path.splitext(file_obj.name)[1]
-        unique_filename = f"{uuid.uuid4().hex}{file_ext}"
-        file_path = os.path.join(media_root, unique_filename)
+            for age_label, age_filter in age_groups.items():
+                age_group_data = {}
+                gender_groups = ['Male', 'Female', 'Non-binary', 'Other', None]
 
-        with open(file_path, 'wb+') as destination:
-            for chunk in file_obj.chunks():
-                destination.write(chunk)
+                for gender in gender_groups:
+                    gender_filter = Q(gender=gender) if gender else Q(gender__isnull=True)
+                    customers = Customer.objects.filter(age_filter & gender_filter)
 
-        return Response({
-            'message': 'File uploaded successfully.',
-            'file_name': unique_filename
-        })
+                    if not customers.exists():
+                        continue
 
-class CustomerSegmentationView(APIView):
+                    purchases = Purchase.objects.filter(customer__in=customers)
+                    items = PurchaseItem.objects.filter(purchase__in=purchases)
+
+                    category_stats = (
+                        items.values('product__category')
+                        .annotate(
+                            total_quantity=Sum('quantity'),
+                            total_revenue=Sum('price_at_purchase')
+                        )
+                        .order_by('-total_quantity')
+                    )
+
+                    gender_label = gender if gender else 'Unspecified'
+                    age_group_data[gender_label] = list(category_stats)
+
+                response_data[age_label] = age_group_data
+
+            return Response({
+                'message': 'Category preferences by age and gender retrieved successfully.',
+                'preferences': response_data
+            })
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+
+
+class DiscountUsageAnalysisView(APIView):
+    def get(self, request, *args, **kwargs):
+        try:
+            # Age group buckets
+            age_groups = {
+                '18–25': Q(age__gte=18, age__lte=25),
+                '26–35': Q(age__gte=26, age__lte=35),
+                '36–50': Q(age__gte=36, age__lte=50),
+                '51+': Q(age__gte=51),
+                'Unknown': Q(age__isnull=True),
+            }
+
+            result = {}
+            for label, age_filter in age_groups.items():
+                customers = Customer.objects.filter(age_filter)
+                purchases = Purchase.objects.filter(customer__in=customers)
+
+                with_discount = purchases.filter(discount_applied=True)
+                without_discount = purchases.filter(discount_applied=False)
+
+                result[label] = {
+                    'total_customers': customers.count(),
+                    'purchases_with_discount': with_discount.count(),
+                    'revenue_with_discount': with_discount.aggregate(Sum('total_amount'))['total_amount__sum'] or 0,
+                    'purchases_without_discount': without_discount.count(),
+                    'revenue_without_discount': without_discount.aggregate(Sum('total_amount'))['total_amount__sum'] or 0,
+                }
+
+            return Response({
+                'message': 'Discount usage analysis completed.',
+                'discount_usage_by_age_group': result
+            })
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+
+
+class TopProductsView(APIView):
+    def get(self, request, *args, **kwargs):
+        try:
+            # Aggregate quantity and revenue per product
+            top_products = (
+                PurchaseItem.objects
+                .values('product__id', 'product__name', 'product__category')
+                .annotate(total_quantity=Sum('quantity'), total_revenue=Sum('price_at_purchase'))
+                .order_by('-total_quantity')[:10]
+            )
+
+            return Response({
+                'message': 'Top products retrieved successfully.',
+                'top_products': list(top_products)
+            })
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+
+
+class ExternalCustomerSegmentationView(APIView):
     def get(self, request, *args, **kwargs):
         file_name = request.query_params.get('file')
         if not file_name:
@@ -89,7 +177,99 @@ class CustomerSegmentationView(APIView):
 
         except Exception as e:
             return Response({'error': str(e)}, status=500)
-    
+
+
+class CustomerSegmentationView(APIView):
+    def get(self, request, *args, **kwargs):
+        try:
+            today = now().date()
+            customers = Customer.objects.all()
+
+            data = []
+            for customer in customers:
+                purchases = Purchase.objects.filter(customer=customer)
+
+                if not purchases.exists():
+                    continue  # Skip customers with no purchases
+
+                total_spend = sum(p.total_amount for p in purchases)
+                frequency = purchases.count()
+                last_purchase_date = purchases.order_by('-purchase_date').first().purchase_date.date()
+                recency = (today - last_purchase_date).days
+
+                data.append({
+                    'CustomerID': customer.id,
+                    'TotalSpend': total_spend,
+                    'PurchaseFrequency': frequency,
+                    'LastPurchaseDays': recency
+                })
+
+            if not data:
+                return Response({'error': 'No valid purchase data available.'}, status=404)
+
+            df = pd.DataFrame(data)
+            features = df[['TotalSpend', 'PurchaseFrequency', 'LastPurchaseDays']]
+            kmeans = KMeans(n_clusters=3, random_state=42)
+            df['Segment'] = kmeans.fit_predict(features)
+
+            # Label segments
+            segment_means = df.groupby('Segment')[['TotalSpend', 'PurchaseFrequency', 'LastPurchaseDays']].mean()
+            labeled_segments = {}
+
+            for segment_id in segment_means.index:
+                spend = segment_means.loc[segment_id, 'TotalSpend']
+                freq = segment_means.loc[segment_id, 'PurchaseFrequency']
+                recency = segment_means.loc[segment_id, 'LastPurchaseDays']
+
+                if spend > 800 and freq > 7 and recency < 10:
+                    label = 'High Value'
+                elif spend > 500 and freq > 4:
+                    label = 'Mid-Tier'
+                else:
+                    label = 'At Risk'
+
+                labeled_segments[segment_id] = label
+
+            df['SegmentLabel'] = df['Segment'].map(labeled_segments)
+            preview = df[['CustomerID', 'TotalSpend', 'PurchaseFrequency', 'LastPurchaseDays', 'SegmentLabel']].head(10).to_dict(orient='records')
+            label_counts = df['SegmentLabel'].value_counts().to_dict()
+
+            return Response({
+                'message': 'Customer segmentation from database successful.',
+                'segment_summary': label_counts,
+                'preview': preview
+            })
+
+        except Exception as e:
+            return Response({'error': str(e)}, status=500)
+
+
+class UploadCSVView(APIView):
+    parser_classes = [MultiPartParser]
+
+    def post(self, request, *args, **kwargs):
+        file_obj = request.FILES.get('file')
+        if not file_obj or not file_obj.name.endswith('.csv'):
+            return Response({'error': 'Please upload a valid CSV file.'}, status=400)
+
+        media_root = os.path.join(os.getcwd(), 'media')
+        os.makedirs(media_root, exist_ok=True)
+
+        # Generate unique file name
+        file_ext = os.path.splitext(file_obj.name)[1]
+        unique_filename = f"{uuid.uuid4().hex}{file_ext}"
+        file_path = os.path.join(media_root, unique_filename)
+
+        with open(file_path, 'wb+') as destination:
+            for chunk in file_obj.chunks():
+                destination.write(chunk)
+
+        return Response({
+            'message': 'File uploaded successfully.',
+            'file_name': unique_filename
+        })
+
+# return segmentation results without human-readable labels
 # class CustomerSegmentationView(APIView):
 #     def get(self, request, *args, **kwargs):
 #         file_name = request.query_params.get('file')
@@ -123,6 +303,7 @@ class CustomerSegmentationView(APIView):
 #             return Response({'error': str(e)}, status=500)
 
 
+# csv file upload without renaming unique file name
 # class UploadCSVView(APIView):
 #     parser_classes = [MultiPartParser]
 
