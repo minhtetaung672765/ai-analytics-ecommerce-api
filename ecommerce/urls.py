@@ -20,10 +20,16 @@ from django.conf.urls.static import static
 
 from django.urls import path, include
 
+from rest_framework_simplejwt.views import TokenObtainPairView
+from analytics.auth_views import RegisterView, UserView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('analytics.urls')),  # API route for analytics
+
+    path('auth/register/', RegisterView.as_view(), name='register'),
+    path('auth/login/', TokenObtainPairView.as_view(), name='login'),
+    path('auth/user/', UserView.as_view(), name='user'),
 ]
 
 if settings.DEBUG:
