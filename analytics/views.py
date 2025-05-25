@@ -25,14 +25,15 @@ class PurchaseCategoryPreferencesView(APIView):
                 '26–35': Q(age__gte=26, age__lte=35),
                 '36–50': Q(age__gte=36, age__lte=50),
                 '51+': Q(age__gte=51),
-                'Unknown': Q(age__isnull=True),
+                # 'Unknown': Q(age__isnull=True),
             }
 
             response_data = {}
 
             for age_label, age_filter in age_groups.items():
                 age_group_data = {}
-                gender_groups = ['Male', 'Female', 'Non-binary', 'Other', None]
+                # gender_groups = ['Male', 'Female', 'Non-binary', 'Other', None]
+                gender_groups = ['Male', 'Female', None]
 
                 for gender in gender_groups:
                     gender_filter = Q(gender=gender) if gender else Q(gender__isnull=True)
@@ -76,7 +77,7 @@ class DiscountUsageAnalysisView(APIView):
                 '26–35': Q(age__gte=26, age__lte=35),
                 '36–50': Q(age__gte=36, age__lte=50),
                 '51+': Q(age__gte=51),
-                'Unknown': Q(age__isnull=True),
+                # 'Unknown': Q(age__isnull=True),
             }
 
             result = {}
@@ -160,12 +161,27 @@ class ExternalCustomerSegmentationView(APIView):
                 elif spend > 500 and freq > 4:
                     label = 'Mid-Tier'
                 else:
-                    label = 'At Risk'
+                    label = 'Average'
 
                 labeled_segments[segment_id] = label
 
-            # Replace numeric segments with labels in preview
-            df['SegmentLabel'] = df['Segment'].map(labeled_segments)
+           # This line of code is replaced with the following block of code
+            # - because it's using default clustering by kmeans
+            # df['SegmentLabel'] = df['Segment'].map(labeled_segments)
+
+            #  ----- + The new code block +------------
+            def label_row(row):
+                if row['TotalSpend'] > 800 and row['PurchaseFrequency'] > 5 and row['LastPurchaseDays'] < 10:
+                    return 'High Value'
+                elif row['TotalSpend'] > 500 and row['PurchaseFrequency'] > 3:
+                    return 'Mid-Tier'
+                else:
+                    return 'Average'
+
+            df['SegmentLabel'] = df.apply(label_row, axis=1)
+            #  ----- / The new code block /------------
+
+
             preview = df[['CustomerID', 'TotalSpend', 'PurchaseFrequency', 'LastPurchaseDays', 'SegmentLabel']].head(10).to_dict(orient='records')
 
             # Summary: count of labeled segments
@@ -223,16 +239,31 @@ class CustomerSegmentationView(APIView):
                 freq = segment_means.loc[segment_id, 'PurchaseFrequency']
                 recency = segment_means.loc[segment_id, 'LastPurchaseDays']
 
-                if spend > 800 and freq > 7 and recency < 10:
+                if spend > 800 and freq > 5 and recency < 10:
                     label = 'High Value'
-                elif spend > 500 and freq > 4:
+                elif spend > 500 and freq > 3:
                     label = 'Mid-Tier'
                 else:
-                    label = 'At Risk'
+                    label = 'Average'
 
                 labeled_segments[segment_id] = label
 
-            df['SegmentLabel'] = df['Segment'].map(labeled_segments)
+            # This line of code is replaced with the following block of code
+            # - because it's using default clustering by kmeans
+            # df['SegmentLabel'] = df['Segment'].map(labeled_segments)
+
+            #  ----- + The new code block +------------
+            def label_row(row):
+                if row['TotalSpend'] > 800 and row['PurchaseFrequency'] > 3 and row['LastPurchaseDays'] < 10:
+                    return 'High Value'
+                elif row['TotalSpend'] > 500 and row['PurchaseFrequency'] > 2:
+                    return 'Mid-Tier'
+                else:
+                    return 'Average'
+
+            df['SegmentLabel'] = df.apply(label_row, axis=1)
+            #  ----- / The new code block /------------
+
             preview = df[['CustomerID', 'TotalSpend', 'PurchaseFrequency', 'LastPurchaseDays', 'SegmentLabel']].head(10).to_dict(orient='records')
             label_counts = df['SegmentLabel'].value_counts().to_dict()
 
