@@ -9,6 +9,7 @@ import pandas as pd
 from sklearn.cluster import KMeans
 import os
 import uuid
+import time
 
 from .models import Customer, Purchase, PurchaseItem, Product
 from django.db.models import Count, Sum, Q
@@ -95,7 +96,7 @@ class DiscountUsageAnalysisView(APIView):
                     'purchases_without_discount': without_discount.count(),
                     'revenue_without_discount': without_discount.aggregate(Sum('total_amount'))['total_amount__sum'] or 0,
                 }
-
+            
             return Response({
                 'message': 'Discount usage analysis completed.',
                 'discount_usage_by_age_group': result
@@ -156,7 +157,7 @@ class ExternalCustomerSegmentationView(APIView):
                 recency = segment_means.loc[segment_id, 'LastPurchaseDays']
 
                 # Heuristic labeling
-                if spend > 800 and freq > 7 and recency < 10:
+                if spend > 800 and freq > 7 and recency < 15:
                     label = 'High Value'
                 elif spend > 500 and freq > 4:
                     label = 'Mid-Tier'
@@ -171,7 +172,7 @@ class ExternalCustomerSegmentationView(APIView):
 
             #  ----- + The new code block +------------
             def label_row(row):
-                if row['TotalSpend'] > 800 and row['PurchaseFrequency'] > 5 and row['LastPurchaseDays'] < 10:
+                if row['TotalSpend'] > 800 and row['PurchaseFrequency'] > 5 and row['LastPurchaseDays'] < 15:
                     return 'High Value'
                 elif row['TotalSpend'] > 500 and row['PurchaseFrequency'] > 3:
                     return 'Mid-Tier'
@@ -186,6 +187,8 @@ class ExternalCustomerSegmentationView(APIView):
 
             # Summary: count of labeled segments
             label_counts = df['SegmentLabel'].value_counts().to_dict()
+
+            time.sleep(2)  # Delay for 2 seconds
 
             return Response({
                 'message': 'Customer segmentation and labeling successful.',
@@ -239,7 +242,7 @@ class CustomerSegmentationView(APIView):
                 freq = segment_means.loc[segment_id, 'PurchaseFrequency']
                 recency = segment_means.loc[segment_id, 'LastPurchaseDays']
 
-                if spend > 800 and freq > 5 and recency < 10:
+                if spend > 800 and freq > 5 and recency < 15:
                     label = 'High Value'
                 elif spend > 500 and freq > 3:
                     label = 'Mid-Tier'
@@ -254,7 +257,7 @@ class CustomerSegmentationView(APIView):
 
             #  ----- + The new code block +------------
             def label_row(row):
-                if row['TotalSpend'] > 800 and row['PurchaseFrequency'] > 3 and row['LastPurchaseDays'] < 10:
+                if row['TotalSpend'] > 800 and row['PurchaseFrequency'] > 3 and row['LastPurchaseDays'] < 15:
                     return 'High Value'
                 elif row['TotalSpend'] > 500 and row['PurchaseFrequency'] > 2:
                     return 'Mid-Tier'
@@ -266,6 +269,8 @@ class CustomerSegmentationView(APIView):
 
             preview = df[['CustomerID', 'TotalSpend', 'PurchaseFrequency', 'LastPurchaseDays', 'SegmentLabel']].head(10).to_dict(orient='records')
             label_counts = df['SegmentLabel'].value_counts().to_dict()
+
+            time.sleep(2)  # Delay for 2 seconds
 
             return Response({
                 'message': 'Customer segmentation from database successful.',

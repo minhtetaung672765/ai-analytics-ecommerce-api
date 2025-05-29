@@ -1,6 +1,0 @@
-CustomerID,Age,Gender,TotalSpend,PurchaseFrequency,LastPurchaseDays
-C001,25,Male,450,5,12
-C002,34,Female,1200,10,3
-C003,29,Male,300,3,30
-C004,40,Female,780,6,7
-C005,31,Non-binary,650,4,15
